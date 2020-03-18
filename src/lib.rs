@@ -17,7 +17,7 @@ pub fn derive(input: TokenStream) -> TokenStream {
 
 struct StructDescriptor<'a> {
     ident: &'a syn::Ident,
-    fields: Vec<Field<'a>>,
+    fields: Vec<FieldDescriptor<'a>>,
 }
 
 impl<'a> StructDescriptor<'a> {
@@ -31,23 +31,23 @@ impl<'a> StructDescriptor<'a> {
         }
     }
 
-    fn parse_fields(fields: &'a syn::Fields) -> Result<Vec<Field>, ParseError> {
+    fn parse_fields(fields: &'a syn::Fields) -> Result<Vec<FieldDescriptor>, ParseError> {
         match fields {
             syn::Fields::Named(fields_named) => Self::parsed_fields_named(&fields_named),
             _ => Err(ParseError::new("Only named fields are supported yet")),
         }
     }
 
-    fn parsed_fields_named(fields: &'a syn::FieldsNamed) -> Result<Vec<Field>, ParseError> {
-        Ok(fields.named.iter().filter_map(|field| {
+    fn parsed_fields_named(fields: &'a syn::FieldsNamed) -> Vec<FieldDescriptor> {
+        fields.named.iter().filter_map(|field| {
             match &field.ident {
-                Some(ident) => Some(Field {
+                Some(ident) => Some(FieldDescriptor {
                     ident: &ident,
                     ty: &field.ty,
                 }),
                 None => None,
             }
-        }).collect())
+        }).collect()
     }
 }
 
@@ -64,7 +64,7 @@ impl ParseError {
     }
 }
 
-struct Field<'a> {
+struct FieldDescriptor<'a> {
     ident: &'a syn::Ident,
     ty: &'a syn::Type,
 }
