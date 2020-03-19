@@ -3,51 +3,66 @@
 extern crate proc_macro;
 
 use proc_macro::TokenStream;
+use quote::quote;
 use std::vec::Vec;
-use quote::{quote};
 use syn;
 
 #[proc_macro_derive(Builder)]
 pub fn derive(input: TokenStream) -> TokenStream {
     let input = syn::parse_macro_input!(input as syn::DeriveInput);
-    let struct_desc = StructDescriptor::from(&input).unwrap();
-    let output = StructOutput::from(&struct_desc).unwrap();
-    output.into()
+    let descriptor = get_descriptor(&input).unwrap();
+    descriptor.to_token_stream().unwrap()
 }
 
-struct StructDescriptor<'a> {
-    ident: &'a syn::Ident,
-    fields: Vec<FieldDescriptor<'a>>,
+fn get_descriptor(input: &syn::DeriveInput) -> Result<Box<dyn Descriptor>, ParseError> {
+    match &input.data {
+        syn::Data::Struct(data) => Ok(Box::new(StructDescriptor::new(&input.ident, &data))),
+        _ => Err(ParseError::new("Only structs are supported yet")),
+    }
 }
 
-impl<'a> StructDescriptor<'a> {
-    fn from(input: &'a syn::DeriveInput) -> Result<Self, ParseError> {
-        match &input.data {
-            syn::Data::Struct(data) => Ok(StructDescriptor{
-                ident: &input.ident, 
-                fields: Self::parse_fields(&data.fields)?,
-            }),
-            _ => Err(ParseError::new("Only structs are supported yet")),
+trait Descriptor {
+    fn to_token_stream(&self) -> Result<TokenStream, ParseError>;
+}
+
+struct StructDescriptor {
+    ident: syn::Ident,
+    data: syn::DataStruct,
+}
+
+impl StructDescriptor {
+    fn new(ident: &syn::Ident, data: &syn::DataStruct) -> Self {
+        StructDescriptor {
+            ident: ident.clone(),
+            data: data.clone(),
         }
     }
 
-    fn parse_fields(fields: &'a syn::Fields) -> Result<Vec<FieldDescriptor>, ParseError> {
-        match fields {
-            syn::Fields::Named(fields_named) => Self::parsed_fields_named(&fields_named),
+    fn parse_fields(&self) -> Result<Vec<FieldDescriptor>, ParseError> {
+        match &self.data.fields {
+            syn::Fields::Named(fields_named) => Ok(Self::parsed_fields_named(&fields_named)),
             _ => Err(ParseError::new("Only named fields are supported yet")),
         }
     }
 
-    fn parsed_fields_named(fields: &'a syn::FieldsNamed) -> Vec<FieldDescriptor> {
-        fields.named.iter().filter_map(|field| {
-            match &field.ident {
+    fn parsed_fields_named(fields: &syn::FieldsNamed) -> Vec<FieldDescriptor> {
+        fields
+            .named
+            .iter()
+            .filter_map(|field| match &field.ident {
                 Some(ident) => Some(FieldDescriptor {
                     ident: &ident,
                     ty: &field.ty,
                 }),
                 None => None,
-            }
-        }).collect()
+            })
+            .collect()
+    }
+}
+
+impl Descriptor for StructDescriptor {
+    fn to_token_stream(&self) -> Result<TokenStream, ParseError> {
+        Ok(StructOutput::from(&self)?.to_token_stream())
     }
 }
 
@@ -79,11 +94,11 @@ impl<'a> StructOutput<'a> {
     fn from(desc: &'a StructDescriptor) -> Result<Self, ParseError> {
         let mut builder_setters: Vec<syn::Stmt> = vec![];
 
-        for field in &desc.fields {
+        for field in &desc.parse_fields()? {
             let ident = &field.ident;
             let ty = &field.ty;
 
-            builder_setters.push(syn::parse_quote!{
+            builder_setters.push(syn::parse_quote! {
                 pub fn #ident(&mut self, value: #ty) -> &mut Self {
                     self
                 }
@@ -93,13 +108,11 @@ impl<'a> StructOutput<'a> {
         Ok(Self {
             struct_ident: &desc.ident,
             builder_ident: quote::format_ident!("{}Builder", &desc.ident),
-            builder_setters: builder_setters,
+            builder_setters,
         })
     }
-}
 
-impl<'a> Into<TokenStream> for StructOutput<'a> {
-    fn into(self) -> TokenStream {
+    fn to_token_stream(&self) -> TokenStream {
         let struct_ident = &self.struct_ident;
         let builder_ident = &self.builder_ident;
         let builder_setters = &self.builder_setters;
