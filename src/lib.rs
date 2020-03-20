@@ -58,11 +58,96 @@ impl StructDescriptor {
             })
             .collect()
     }
+
+    fn evaluate_struct_field_init(field: &FieldDescriptor) -> impl quote::ToTokens {
+        let ident = &field.ident;
+        let ty = &field.ty;
+
+        quote!{
+            #ident: builder.#ident.clone().ok_or("Failed to build field #ident".to_owned())?
+        }
+    }
+
+    fn evaluate_builder_field_decl(field: &FieldDescriptor) -> impl quote::ToTokens {
+        let ident = &field.ident;
+        let ty = &field.ty;
+
+        quote!{
+            pub #ident: std::option::Option<#ty>
+        }
+    }
+
+    fn evaluate_builder_field_init(field: &FieldDescriptor) -> impl quote::ToTokens {
+        let ident = &field.ident;
+
+        quote!{
+            #ident: std::option::Option::None
+        }
+    }
+
+    fn evaluate_builder_setter(field: &FieldDescriptor) -> impl quote::ToTokens {
+        let ident = &field.ident;
+        let ty = &field.ty;
+
+        quote! {
+            pub fn #ident(&mut self, value: #ty) -> &mut Self {
+                self.#ident = std::option::Option::Some(value);
+                self
+            }
+        }
+    }
 }
 
 impl Descriptor for StructDescriptor {
     fn to_token_stream(&self) -> Result<TokenStream, ParseError> {
-        Ok(StructOutput::from(&self)?.to_token_stream())
+        let fields = self.parse_fields()?;
+
+        let struct_ident = &self.ident;
+        let builder_ident = quote::format_ident!("{}Builder", &struct_ident);
+
+        let mut struct_fields_init: Vec<Box<dyn quote::ToTokens>> = vec![];
+        let mut builder_fields_decl: Vec<Box<dyn quote::ToTokens>> = vec![];
+        let mut builder_fields_init: Vec<Box<dyn quote::ToTokens>> = vec![];
+        let mut builder_setters: Vec<Box<dyn quote::ToTokens>> = vec![];
+
+        for field in &fields {
+            struct_fields_init.push(Box::new(Self::evaluate_struct_field_init(&field)));
+            builder_fields_decl.push(Box::new(Self::evaluate_builder_field_decl(&field)));
+            builder_fields_init.push(Box::new(Self::evaluate_builder_field_init(&field)));
+            builder_setters.push(Box::new(Self::evaluate_builder_setter(&field)));
+        }
+
+        Ok(TokenStream::from(quote! {
+            impl #struct_ident {
+                pub fn builder() -> #builder_ident {
+                    #builder_ident::new()
+                }
+
+                fn from_builder(builder: &#builder_ident) -> std::result::Result<#struct_ident, String> {
+                    std::result::Result::Ok(#struct_ident{
+                        #(#struct_fields_init),*
+                    })
+                }
+            }
+
+            pub struct #builder_ident {
+                #(#builder_fields_decl),*
+            }
+
+            impl #builder_ident {
+                fn new() -> Self {
+                    Self {
+                        #(#builder_fields_init),*
+                    }
+                }
+
+                #(#builder_setters)*
+
+                pub fn build(&self) -> std::result::Result<#struct_ident, String> {
+                    #struct_ident::from_builder(&self)
+                }
+            }
+        }))
     }
 }
 
@@ -82,58 +167,4 @@ impl ParseError {
 struct FieldDescriptor<'a> {
     ident: &'a syn::Ident,
     ty: &'a syn::Type,
-}
-
-struct StructOutput<'a> {
-    struct_ident: &'a syn::Ident,
-    builder_ident: syn::Ident,
-    builder_setters: Vec<syn::Stmt>,
-}
-
-impl<'a> StructOutput<'a> {
-    fn from(desc: &'a StructDescriptor) -> Result<Self, ParseError> {
-        let mut builder_setters: Vec<syn::Stmt> = vec![];
-
-        for field in &desc.parse_fields()? {
-            let ident = &field.ident;
-            let ty = &field.ty;
-
-            builder_setters.push(syn::parse_quote! {
-                pub fn #ident(&mut self, value: #ty) -> &mut Self {
-                    self
-                }
-            });
-        }
-
-        Ok(Self {
-            struct_ident: &desc.ident,
-            builder_ident: quote::format_ident!("{}Builder", &desc.ident),
-            builder_setters,
-        })
-    }
-
-    fn to_token_stream(&self) -> TokenStream {
-        let struct_ident = &self.struct_ident;
-        let builder_ident = &self.builder_ident;
-        let builder_setters = &self.builder_setters;
-
-        TokenStream::from(quote! {
-            impl #struct_ident {
-                pub fn builder() -> #builder_ident {
-                    #builder_ident::new()
-                }
-            }
-
-            struct #builder_ident {
-            }
-
-            impl #builder_ident {
-                pub fn new() -> Self {
-                    Self {}
-                }
-
-                #(#builder_setters)*
-            }
-        })
-    }
 }

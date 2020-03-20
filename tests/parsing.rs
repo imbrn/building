@@ -1,10 +1,9 @@
 use building::Builder;
 
 #[derive(Builder)]
-struct Product {
+pub struct Product {
 }
 
-#[test]
-fn should_work() {
+fn main() {
     let _product = Product{};
 }
