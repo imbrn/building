@@ -124,7 +124,7 @@ impl<'a> FieldDescriptor<'a> {
         let ty = &self.ty;
 
         quote!{
-            #ident: builder.#ident.clone().ok_or("Failed to build field #ident".to_owned())?
+            #ident: builder.#ident.clone().ok_or("Failed to build field".to_owned())?
         }
     }
 
