@@ -156,6 +156,38 @@ impl<'a> FieldDescriptor<'a> {
             }
         }
     }
+
+    fn get_optional_type(&self) -> Option<syn::Type> {
+        match self.ty {
+            syn::Type::Path(path) => Self::get_path_optional_type(path),
+            _ => None,
+        }
+    }
+
+    fn get_path_optional_type(type_path: &syn::TypePath) -> Option<syn::Type> {
+        if let Some(segment) = type_path.path.segments.first() {
+            if segment.ident == "Option" {
+                return Self::get_path_optional_type_from_path_arguments(&segment.arguments);
+            }
+        }
+        None
+    }
+
+    fn get_path_optional_type_from_path_arguments(arguments: &syn::PathArguments) -> Option<syn::Type> {
+        if let syn::PathArguments::AngleBracketed(arguments) = arguments {
+            return Self::get_path_optional_angle_bracketed_type(&arguments);
+        }
+        None
+    }
+
+    fn get_path_optional_angle_bracketed_type(arguments: &syn::AngleBracketedGenericArguments) -> Option<syn::Type> {
+        if let Some(argument) = arguments.args.first() {
+            if let syn::GenericArgument::Type(ty) = argument {
+                return Some(ty.clone());
+            }
+        }
+        None
+    }
 }
 
 #[derive(Debug)]

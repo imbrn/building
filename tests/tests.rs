@@ -5,4 +5,5 @@ fn tests() {
     t.pass("tests/creating_builder.rs");
     t.pass("tests/calling_setters.rs");
     t.pass("tests/calling_build.rs");
+    t.pass("tests/optional_fields.rs");
 }
