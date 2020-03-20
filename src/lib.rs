@@ -40,12 +40,12 @@ impl StructDescriptor {
 
     fn parse_fields(&self) -> Result<Vec<FieldDescriptor>, ParseError> {
         match &self.data.fields {
-            syn::Fields::Named(fields_named) => Ok(Self::parsed_fields_named(&fields_named)),
+            syn::Fields::Named(fields_named) => Ok(Self::parse_fields_named(&fields_named)),
             _ => Err(ParseError::new("Only named fields are supported yet")),
         }
     }
 
-    fn parsed_fields_named(fields: &syn::FieldsNamed) -> Vec<FieldDescriptor> {
+    fn parse_fields_named(fields: &syn::FieldsNamed) -> Vec<FieldDescriptor> {
         fields
             .named
             .iter()
@@ -57,44 +57,6 @@ impl StructDescriptor {
                 None => None,
             })
             .collect()
-    }
-
-    fn evaluate_struct_field_init(field: &FieldDescriptor) -> impl quote::ToTokens {
-        let ident = &field.ident;
-        let ty = &field.ty;
-
-        quote!{
-            #ident: builder.#ident.clone().ok_or("Failed to build field #ident".to_owned())?
-        }
-    }
-
-    fn evaluate_builder_field_decl(field: &FieldDescriptor) -> impl quote::ToTokens {
-        let ident = &field.ident;
-        let ty = &field.ty;
-
-        quote!{
-            pub #ident: std::option::Option<#ty>
-        }
-    }
-
-    fn evaluate_builder_field_init(field: &FieldDescriptor) -> impl quote::ToTokens {
-        let ident = &field.ident;
-
-        quote!{
-            #ident: std::option::Option::None
-        }
-    }
-
-    fn evaluate_builder_setter(field: &FieldDescriptor) -> impl quote::ToTokens {
-        let ident = &field.ident;
-        let ty = &field.ty;
-
-        quote! {
-            pub fn #ident(&mut self, value: #ty) -> &mut Self {
-                self.#ident = std::option::Option::Some(value);
-                self
-            }
-        }
     }
 }
 
@@ -111,10 +73,10 @@ impl Descriptor for StructDescriptor {
         let mut builder_setters: Vec<Box<dyn quote::ToTokens>> = vec![];
 
         for field in &fields {
-            struct_fields_init.push(Box::new(Self::evaluate_struct_field_init(&field)));
-            builder_fields_decl.push(Box::new(Self::evaluate_builder_field_decl(&field)));
-            builder_fields_init.push(Box::new(Self::evaluate_builder_field_init(&field)));
-            builder_setters.push(Box::new(Self::evaluate_builder_setter(&field)));
+            struct_fields_init.push(Box::new(field.struct_field_init()));
+            builder_fields_decl.push(Box::new(field.builder_field_decl()));
+            builder_fields_init.push(Box::new(field.builder_field_init()));
+            builder_setters.push(Box::new(field.builder_setter()));
         }
 
         Ok(TokenStream::from(quote! {
@@ -151,6 +113,51 @@ impl Descriptor for StructDescriptor {
     }
 }
 
+struct FieldDescriptor<'a> {
+    ident: &'a syn::Ident,
+    ty: &'a syn::Type,
+}
+
+impl<'a> FieldDescriptor<'a> {
+    fn struct_field_init(&self) -> impl quote::ToTokens {
+        let ident = &self.ident;
+        let ty = &self.ty;
+
+        quote!{
+            #ident: builder.#ident.clone().ok_or("Failed to build field #ident".to_owned())?
+        }
+    }
+
+    fn builder_field_decl(&self) -> impl quote::ToTokens {
+        let ident = self.ident;
+        let ty = self.ty;
+
+        quote!{
+            pub #ident: std::option::Option<#ty>
+        }
+    }
+
+    fn builder_field_init(&self) -> impl quote::ToTokens {
+        let ident = self.ident;
+
+        quote!{
+            #ident: std::option::Option::None
+        }
+    }
+
+    fn builder_setter(&self) -> impl quote::ToTokens {
+        let ident = self.ident;
+        let ty = self.ty;
+
+        quote! {
+            pub fn #ident(&mut self, value: #ty) -> &mut Self {
+                self.#ident = std::option::Option::Some(value);
+                self
+            }
+        }
+    }
+}
+
 #[derive(Debug)]
 struct ParseError {
     message: String,
@@ -162,9 +169,4 @@ impl ParseError {
             message: msg.to_owned(),
         }
     }
-}
-
-struct FieldDescriptor<'a> {
-    ident: &'a syn::Ident,
-    ty: &'a syn::Type,
 }
