@@ -122,32 +122,28 @@ impl<'a> FieldDescriptor<'a> {
     fn struct_field_init(&self) -> impl quote::ToTokens {
         let ident = &self.ident;
         let ty = &self.ty;
-
-        quote!{
-            #ident: builder.#ident.clone().ok_or("Failed to build field".to_owned())?
+        
+        if let Some(_) = self.optional_type() {
+            quote!{ #ident: builder.#ident.clone() }
+        } else {
+            quote!{ #ident: builder.#ident.clone().ok_or("Failed to build field".to_owned())? }
         }
     }
 
     fn builder_field_decl(&self) -> impl quote::ToTokens {
         let ident = self.ident;
-        let ty = self.ty;
-
-        quote!{
-            pub #ident: std::option::Option<#ty>
-        }
+        let ty = self.get_type();
+        quote!{ pub #ident: std::option::Option<#ty> }
     }
 
     fn builder_field_init(&self) -> impl quote::ToTokens {
         let ident = self.ident;
-
-        quote!{
-            #ident: std::option::Option::None
-        }
+        quote!{ #ident: std::option::Option::None }
     }
 
     fn builder_setter(&self) -> impl quote::ToTokens {
         let ident = self.ident;
-        let ty = self.ty;
+        let ty = self.get_type();
 
         quote! {
             pub fn #ident(&mut self, value: #ty) -> &mut Self {
@@ -157,7 +153,16 @@ impl<'a> FieldDescriptor<'a> {
         }
     }
 
-    fn get_optional_type(&self) -> Option<syn::Type> {
+    fn get_type(&self) -> syn::Type {
+        let optional_type = self.optional_type();
+
+        match self.optional_type() {
+            Some(optional_type) => optional_type,
+            _ => self.ty.clone(),
+        }
+    }
+
+    fn optional_type(&self) -> Option<syn::Type> {
         match self.ty {
             syn::Type::Path(path) => Self::get_path_optional_type(path),
             _ => None,
@@ -167,20 +172,20 @@ impl<'a> FieldDescriptor<'a> {
     fn get_path_optional_type(type_path: &syn::TypePath) -> Option<syn::Type> {
         if let Some(segment) = type_path.path.segments.first() {
             if segment.ident == "Option" {
-                return Self::get_path_optional_type_from_path_arguments(&segment.arguments);
+                return Self::get_optional_type_from_path_arguments(&segment.arguments);
             }
         }
         None
     }
 
-    fn get_path_optional_type_from_path_arguments(arguments: &syn::PathArguments) -> Option<syn::Type> {
+    fn get_optional_type_from_path_arguments(arguments: &syn::PathArguments) -> Option<syn::Type> {
         if let syn::PathArguments::AngleBracketed(arguments) = arguments {
-            return Self::get_path_optional_angle_bracketed_type(&arguments);
+            return Self::get_optional_angle_bracketed_type(&arguments);
         }
         None
     }
 
-    fn get_path_optional_angle_bracketed_type(arguments: &syn::AngleBracketedGenericArguments) -> Option<syn::Type> {
+    fn get_optional_angle_bracketed_type(arguments: &syn::AngleBracketedGenericArguments) -> Option<syn::Type> {
         if let Some(argument) = arguments.args.first() {
             if let syn::GenericArgument::Type(ty) = argument {
                 return Some(ty.clone());

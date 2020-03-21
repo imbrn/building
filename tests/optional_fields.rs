@@ -2,7 +2,7 @@ use building::Builder;
 use std::vec::Vec;
 
 #[derive(Builder)]
-struct Product {
+pub struct Product {
     id: i32,
     name: String,
     description: Option<String>,
