@@ -4,6 +4,7 @@ use std::vec::Vec;
 #[derive(Builder)]
 pub struct Product {
     id: i32,
+    code: Option<u32>,
     name: String,
     description: Option<String>,
     tags: Vec<String>,
@@ -12,6 +13,7 @@ pub struct Product {
 fn passing_optional_value() {
     let product = Product::builder()
         .id(12)
+        .code(1234)
         .name("Foo".to_owned())
         .description("The product description".to_owned())
         .tags(vec!["foo".to_owned(), "bar".to_owned()])
@@ -19,6 +21,7 @@ fn passing_optional_value() {
         .unwrap();
 
     assert_eq!(12, product.id);
+    assert_eq!(Some(1234), product.code);
     assert_eq!("Foo".to_owned(), product.name);
     assert_eq!(Some("The product description".to_owned()), product.description);
     assert_eq!(vec!["foo".to_owned(), "bar".to_owned()], product.tags);
@@ -33,6 +36,7 @@ fn omitting_optional_value() {
         .unwrap();
 
     assert_eq!(12, product.id);
+    assert_eq!(None, product.code);
     assert_eq!("Foo".to_owned(), product.name);
     assert_eq!(None, product.description);
     assert_eq!(vec!["foo".to_owned(), "bar".to_owned()], product.tags);
