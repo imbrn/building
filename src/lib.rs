@@ -4,6 +4,7 @@ extern crate proc_macro;
 
 use proc_macro::TokenStream;
 use quote::quote;
+use std::collections::HashMap;
 use std::vec::Vec;
 use syn;
 
@@ -50,7 +51,7 @@ impl StructDescriptor {
             .named
             .iter()
             .filter_map(|field| match &field.ident {
-                Some(ident) => Some(FieldDescriptor::parse(&ident, &field.ty)),
+                Some(ident) => Some(FieldDescriptor::parse(&ident, &field)),
                 None => None,
             })
             .collect()
@@ -112,23 +113,25 @@ impl Descriptor for StructDescriptor {
 
 struct FieldDescriptor<'a> {
     ident: &'a syn::Ident,
-    original_type: &'a syn::Type,
+    field: &'a syn::Field,
     angle_bracketed_type: Option<(&'a syn::Ident, &'a syn::AngleBracketedGenericArguments)>,
+    config: HashMap<String, String>,
 }
 
 impl<'a> FieldDescriptor<'a> {
-    fn parse(ident: &'a syn::Ident, ty: &'a syn::Type) -> Self {
+    fn parse(ident: &'a syn::Ident, field: &'a syn::Field) -> Self {
         Self {
-            ident,
-            original_type: ty,
-            angle_bracketed_type: Self::parse_angle_bracketed_type(&ty),
+            ident: &ident,
+            field,
+            angle_bracketed_type: Self::parse_angle_bracketed_type(&field),
+            config: Self::parse_config(&field),
         }
     }
 
     fn parse_angle_bracketed_type(
-        ty: &'a syn::Type,
+        field: &'a syn::Field,
     ) -> Option<(&'a syn::Ident, &'a syn::AngleBracketedGenericArguments)> {
-        match ty {
+        match &field.ty {
             syn::Type::Path(type_path) => match type_path.path.segments.first() {
                 Some(segment) => match &segment.arguments {
                     syn::PathArguments::AngleBracketed(args) => Some((&segment.ident, args)),
@@ -140,10 +143,49 @@ impl<'a> FieldDescriptor<'a> {
         }
     }
 
+    fn parse_config(field: &'a syn::Field) -> HashMap<String, String> {
+        let mut config = HashMap::new();
+
+        &field
+            .attrs
+            .iter()
+            .filter(|attr_ref| {
+                attr_ref
+                    .path
+                    .get_ident()
+                    .map_or(false, |ident| ident == "builder")
+            })
+            .filter_map(|attr_ref| attr_ref.parse_meta().ok())
+            .filter_map(|meta| match meta {
+                syn::Meta::List(meta_list) => Some(meta_list.nested),
+                _ => None,
+            })
+            .for_each(|nested_data| {
+                nested_data.iter().for_each(|nested_data| {
+                    if let syn::NestedMeta::Meta(nested_data) = nested_data {
+                        match nested_data {
+                            syn::Meta::NameValue(name_value) => match &name_value.lit {
+                                syn::Lit::Str(lit_str) => {
+                                    config.insert(
+                                        name_value.path.get_ident().unwrap().to_string(),
+                                        lit_str.value(),
+                                    );
+                                }
+                                _ => {}
+                            },
+                            _ => {}
+                        }
+                    }
+                });
+            });
+
+        config
+    }
+
     fn struct_field_init(&self) -> impl quote::ToTokens {
         let ident = &self.ident;
 
-        if self.is_optional_type() {
+        if self.is_optional_type() || self.is_vector_type() {
             quote! { #ident: builder.#ident.clone() }
         } else {
             quote! { #ident: builder.#ident.clone().ok_or("Failed to build field".to_owned())? }
@@ -152,35 +194,63 @@ impl<'a> FieldDescriptor<'a> {
 
     fn builder_field_decl(&self) -> impl quote::ToTokens {
         let ident = self.ident;
+        let ty = self.get_inner_type();
 
-        let ty = if self.is_optional_type() {
-            self.get_inner_type()
+        if self.is_optional_type() {
+            quote! { pub #ident: std::option::Option<#ty> }
+        } else if self.is_vector_type() {
+            quote! { pub #ident: std::vec::Vec<#ty> }
         } else {
-            self.original_type
-        };
-
-        quote! { pub #ident: std::option::Option<#ty> }
+            quote! { pub #ident: std::option::Option<#ty> }
+        }
     }
 
     fn builder_field_init(&self) -> impl quote::ToTokens {
         let ident = self.ident;
-        quote! { #ident: std::option::Option::None }
+
+        if self.is_vector_type() {
+            quote! { #ident: std::vec::Vec::new() }
+        } else {
+            quote! { #ident: std::option::Option::None }
+        }
     }
 
     fn builder_setter(&self) -> impl quote::ToTokens {
         let ident = self.ident;
+        let each_setter = self.config.get("each");
+        let ty = self.get_inner_type();
 
-        let ty = if self.is_optional_type() {
-            self.get_inner_type()
+        let each_setter = if each_setter.is_some() && self.is_vector_type() {
+            let each_setter = quote::format_ident!("{}", each_setter.unwrap());
+            quote!{
+                pub fn #each_setter(&mut self, value: #ty) -> &mut Self {
+                    self.#ident.push(value);
+                    self
+                }
+            }
         } else {
-            self.original_type
+            quote!{}
+        };
+
+        let normal_setter = if self.is_vector_type() {
+            quote! {
+                pub fn #ident(&mut self, value: std::vec::Vec<#ty>) -> &mut Self {
+                    self.#ident = value;
+                    self
+                }
+            }
+        } else {
+            quote! {
+                pub fn #ident(&mut self, value: #ty) -> &mut Self {
+                    self.#ident = std::option::Option::Some(value);
+                    self
+                }
+            }
         };
 
         quote! {
-            pub fn #ident(&mut self, value: #ty) -> &mut Self {
-                self.#ident = std::option::Option::Some(value);
-                self
-            }
+            #each_setter
+            #normal_setter
         }
     }
 
@@ -191,12 +261,19 @@ impl<'a> FieldDescriptor<'a> {
         }
     }
 
+    fn is_vector_type(&self) -> bool {
+        match &self.angle_bracketed_type {
+            Some((ident, _)) => ident == &"Vec",
+            _ => false,
+        }
+    }
+
     fn get_inner_type(&'a self) -> &'a syn::Type {
         match &self.angle_bracketed_type {
             Some((_, bracketed_args)) => {
-                Self::get_nth_angle_bracketed_type(0, &bracketed_args).unwrap_or(self.original_type)
+                Self::get_nth_angle_bracketed_type(0, &bracketed_args).unwrap_or(&self.field.ty)
             }
-            _ => self.original_type,
+            _ => &self.field.ty,
         }
     }
 
