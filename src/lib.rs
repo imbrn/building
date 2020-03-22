@@ -301,7 +301,6 @@ impl<'a> VectorFieldDescriptor<'a> {
     }
 }
 
-#[derive(Debug)]
 struct AttrConfig {
     ident: syn::Ident,
     sep: syn::Token!(=),
