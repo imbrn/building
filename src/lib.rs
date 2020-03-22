@@ -67,10 +67,10 @@ impl Descriptor for StructDescriptor {
         let mut builder_setters: Vec<Box<dyn quote::ToTokens>> = vec![];
 
         for field in &fields {
-            struct_fields_init.push(Box::new(field.struct_field_init()));
-            builder_fields_decl.push(Box::new(field.builder_field_decl()));
-            builder_fields_init.push(Box::new(field.builder_field_init()));
-            builder_setters.push(Box::new(field.builder_setter()));
+            struct_fields_init.push(field.struct_field_init()?);
+            builder_fields_decl.push(field.builder_field_decl()?);
+            builder_fields_init.push(field.builder_field_init()?);
+            builder_setters.push(field.builder_setter()?);
         }
 
         Ok(TokenStream::from(quote! {
@@ -166,10 +166,10 @@ type BoxedFieldDescriptor<'a> = Box<dyn FieldDescriptor + 'a>;
 type BoxedToTokens = Box<dyn quote::ToTokens>;
 
 trait FieldDescriptor {
-    fn struct_field_init(&self) -> BoxedToTokens;
-    fn builder_field_decl(&self) -> BoxedToTokens;
-    fn builder_field_init(&self) -> BoxedToTokens;
-    fn builder_setter(&self) -> BoxedToTokens;
+    fn struct_field_init(&self) -> Result<BoxedToTokens, TokenizingError>;
+    fn builder_field_decl(&self) -> Result<BoxedToTokens, TokenizingError>;
+    fn builder_field_init(&self) -> Result<BoxedToTokens, TokenizingError>;
+    fn builder_setter(&self) -> Result<BoxedToTokens, TokenizingError>;
 }
 
 struct BasicFieldDescriptor<'a> {
@@ -184,33 +184,33 @@ impl<'a> BasicFieldDescriptor<'a> {
 }
 
 impl<'a> FieldDescriptor for BasicFieldDescriptor<'a> {
-    fn struct_field_init(&self) -> BoxedToTokens {
+    fn struct_field_init(&self) -> Result<BoxedToTokens, TokenizingError> {
         let ident = &self.ident;
-        Box::new(
+        Ok(Box::new(
             quote! { #ident: builder.#ident.clone().ok_or("Failed to build field".to_owned())? },
-        )
+        ))
     }
 
-    fn builder_field_decl(&self) -> BoxedToTokens {
+    fn builder_field_decl(&self) -> Result<BoxedToTokens, TokenizingError> {
         let ident = &self.ident;
         let ty = &self.ty;
-        Box::new(quote! { pub #ident: std::option::Option<#ty> })
+        Ok(Box::new(quote! { pub #ident: std::option::Option<#ty> }))
     }
 
-    fn builder_field_init(&self) -> BoxedToTokens {
+    fn builder_field_init(&self) -> Result<BoxedToTokens, TokenizingError> {
         let ident = &self.ident;
-        Box::new(quote! { #ident: std::option::Option::None })
+        Ok(Box::new(quote! { #ident: std::option::Option::None }))
     }
 
-    fn builder_setter(&self) -> BoxedToTokens {
+    fn builder_setter(&self) -> Result<BoxedToTokens, TokenizingError> {
         let ident = &self.ident;
         let ty = &self.ty;
-        Box::new(quote! {
+        Ok(Box::new(quote! {
             pub fn #ident(&mut self, value: #ty) -> &mut Self {
                 self.#ident = std::option::Option::Some(value);
                 self
             }
-        })
+        }))
     }
 }
 
@@ -233,31 +233,31 @@ impl<'a> OptionFieldDescriptor<'a> {
 }
 
 impl<'a> FieldDescriptor for OptionFieldDescriptor<'a> {
-    fn struct_field_init(&self) -> BoxedToTokens {
+    fn struct_field_init(&self) -> Result<BoxedToTokens, TokenizingError> {
         let ident = &self.ident;
-        Box::new(quote! { #ident: builder.#ident.clone() })
+        Ok(Box::new(quote! { #ident: builder.#ident.clone() }))
     }
 
-    fn builder_field_decl(&self) -> BoxedToTokens {
+    fn builder_field_decl(&self) -> Result<BoxedToTokens, TokenizingError> {
         let ident = &self.ident;
         let ty = &self.optional_type;
-        Box::new(quote! { pub #ident: std::option::Option<#ty> })
+        Ok(Box::new(quote! { pub #ident: std::option::Option<#ty> }))
     }
 
-    fn builder_field_init(&self) -> BoxedToTokens {
+    fn builder_field_init(&self) -> Result<BoxedToTokens, TokenizingError> {
         let ident = &self.ident;
-        Box::new(quote! { #ident: std::option::Option::None })
+        Ok(Box::new(quote! { #ident: std::option::Option::None }))
     }
 
-    fn builder_setter(&self) -> BoxedToTokens {
+    fn builder_setter(&self) -> Result<BoxedToTokens, TokenizingError> {
         let ident = &self.ident;
         let ty = &self.optional_type;
-        Box::new(quote! {
+        Ok(Box::new(quote! {
             pub fn #ident(&mut self, value: #ty) -> &mut Self {
                 self.#ident = std::option::Option::Some(value);
                 self
             }
-        })
+        }))
     }
 }
 
@@ -316,23 +316,23 @@ impl syn::parse::Parse for AttrConfig {
 }
 
 impl<'a> FieldDescriptor for VectorFieldDescriptor<'a> {
-    fn struct_field_init(&self) -> BoxedToTokens {
+    fn struct_field_init(&self) -> Result<BoxedToTokens, TokenizingError> {
         let ident = &self.ident;
-        Box::new(quote! { #ident: builder.#ident.clone() })
+        Ok(Box::new(quote! { #ident: builder.#ident.clone() }))
     }
 
-    fn builder_field_decl(&self) -> BoxedToTokens {
+    fn builder_field_decl(&self) -> Result<BoxedToTokens, TokenizingError> {
         let ident = &self.ident;
         let ty = &self.item_type;
-        Box::new(quote! { pub #ident: std::vec::Vec<#ty> })
+        Ok(Box::new(quote! { pub #ident: std::vec::Vec<#ty> }))
     }
 
-    fn builder_field_init(&self) -> BoxedToTokens {
+    fn builder_field_init(&self) -> Result<BoxedToTokens, TokenizingError> {
         let ident = &self.ident;
-        Box::new(quote! { #ident: std::vec::Vec::new() })
+        Ok(Box::new(quote! { #ident: std::vec::Vec::new() }))
     }
 
-    fn builder_setter(&self) -> BoxedToTokens {
+    fn builder_setter(&self) -> Result<BoxedToTokens, TokenizingError> {
         let ident = &self.ident;
         let ty = &self.item_type;
         let each_ident = &self.each_ident;
@@ -356,10 +356,10 @@ impl<'a> FieldDescriptor for VectorFieldDescriptor<'a> {
             }
         };
 
-        Box::new(quote! {
+        Ok(Box::new(quote! {
             #each_setter
             #normal_setter
-        })
+        }))
     }
 }
 
