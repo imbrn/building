@@ -15,15 +15,15 @@ pub fn derive(input: TokenStream) -> TokenStream {
     descriptor.to_token_stream().unwrap()
 }
 
-fn get_descriptor(input: &syn::DeriveInput) -> Result<Box<dyn Descriptor>, ParseError> {
+fn get_descriptor(input: &syn::DeriveInput) -> Result<Box<dyn Descriptor>, TokenizingError> {
     match &input.data {
         syn::Data::Struct(data) => Ok(Box::new(StructDescriptor::new(&input.ident, &data))),
-        _ => Err(ParseError::new("Only structs are supported yet")),
+        _ => Err(TokenizingError::new("Only structs are supported yet")),
     }
 }
 
 trait Descriptor {
-    fn to_token_stream(&self) -> Result<TokenStream, ParseError>;
+    fn to_token_stream(&self) -> Result<TokenStream, TokenizingError>;
 }
 
 struct StructDescriptor {
@@ -39,25 +39,23 @@ impl StructDescriptor {
         }
     }
 
-    fn parse_fields<'a>(&'a self) -> Result<Vec<BoxedFieldDescriptor>, ParseError> {
+    fn parse_fields<'a>(&'a self) -> Result<Vec<BoxedFieldDescriptor>, TokenizingError> {
         match &self.data.fields {
             syn::Fields::Named(fields_named) => Ok(fields_named
                 .named
                 .iter()
-                .filter_map(|field| {
-                    match &field.ident {
-                        Some(ident) => resolve_field_descriptor(&ident, &field).ok(),
-                        None => None,
-                    }
+                .filter_map(|field| match &field.ident {
+                    Some(ident) => resolve_field_descriptor(&ident, &field).ok(),
+                    None => None,
                 })
                 .collect()),
-            _ => Err(ParseError::new("Only named fields are supported yet")),
+            _ => Err(TokenizingError::new("Only named fields are supported yet")),
         }
     }
 }
 
 impl Descriptor for StructDescriptor {
-    fn to_token_stream(&self) -> Result<TokenStream, ParseError> {
+    fn to_token_stream(&self) -> Result<TokenStream, TokenizingError> {
         let fields = self.parse_fields()?;
 
         let struct_ident = &self.ident;
@@ -366,13 +364,13 @@ impl<'a> FieldDescriptor for VectorFieldDescriptor<'a> {
 }
 
 #[derive(Debug)]
-struct ParseError {
+struct TokenizingError {
     message: String,
 }
 
-impl ParseError {
-    fn new(msg: &str) -> ParseError {
-        ParseError {
+impl TokenizingError {
+    fn new(msg: &str) -> TokenizingError {
+        TokenizingError {
             message: msg.to_owned(),
         }
     }
