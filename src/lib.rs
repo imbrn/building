@@ -287,13 +287,16 @@ impl<'a> VectorFieldDescriptor<'a> {
     }
 
     fn resolve_each_config(attrs: &'a Vec<syn::Attribute>) -> Option<String> {
+        let expected_attr_ident = quote::format_ident!("builder");
+
         for attr in attrs.iter() {
             if let Some(config) = attr.parse_args::<AttrConfig>().ok() {
-                if config.ident == &"each" {
+                if attr.path.get_ident() == Some(&expected_attr_ident) && config.ident == &"each" {
                     return Some(config.lit.value().to_string());
                 }
             }
         }
+
         None
     }
 }
