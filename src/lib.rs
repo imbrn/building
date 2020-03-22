@@ -194,7 +194,7 @@ impl<'a> FieldDescriptor<'a> {
 
     fn builder_field_decl(&self) -> impl quote::ToTokens {
         let ident = self.ident;
-        let ty = self.get_inner_type();
+        let ty = self.get_main_type();
 
         if self.is_optional_type() {
             quote! { pub #ident: std::option::Option<#ty> }
@@ -218,7 +218,7 @@ impl<'a> FieldDescriptor<'a> {
     fn builder_setter(&self) -> impl quote::ToTokens {
         let ident = self.ident;
         let each_setter = self.config.get("each");
-        let ty = self.get_inner_type();
+        let ty = self.get_main_type();
 
         let each_setter = if each_setter.is_some() && self.is_vector_type() {
             let each_setter = quote::format_ident!("{}", each_setter.unwrap());
@@ -268,7 +268,7 @@ impl<'a> FieldDescriptor<'a> {
         }
     }
 
-    fn get_inner_type(&'a self) -> &'a syn::Type {
+    fn get_main_type(&'a self) -> &'a syn::Type {
         match &self.angle_bracketed_type {
             Some((_, bracketed_args)) => {
                 Self::get_nth_angle_bracketed_type(0, &bracketed_args).unwrap_or(&self.field.ty)
