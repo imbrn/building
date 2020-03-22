@@ -2,60 +2,68 @@
 
 extern crate proc_macro;
 
-use proc_macro::TokenStream;
+use proc_macro2::TokenStream;
 use quote::quote;
 use std::collections::HashMap;
 use std::vec::Vec;
 use syn;
 
 #[proc_macro_derive(Builder, attributes(builder))]
-pub fn derive(input: TokenStream) -> TokenStream {
+pub fn derive(input: proc_macro::TokenStream) -> proc_macro::TokenStream {
     let input = syn::parse_macro_input!(input as syn::DeriveInput);
     let descriptor = get_descriptor(&input).unwrap();
-    descriptor.to_token_stream().unwrap()
+    let output: TokenStream = descriptor
+        .to_token_stream()
+        .unwrap_or_else(|err| err.to_compile_error());
+    proc_macro::TokenStream::from(output)
 }
 
-fn get_descriptor(input: &syn::DeriveInput) -> Result<Box<dyn Descriptor>, TokenizingError> {
+fn get_descriptor<'a>(input: &'a syn::DeriveInput) -> Result<Box<dyn Descriptor + 'a>, &str> {
     match &input.data {
         syn::Data::Struct(data) => Ok(Box::new(StructDescriptor::new(&input.ident, &data))),
-        _ => Err(TokenizingError::new("Only structs are supported yet")),
+        _ => Err("Only structs are supported yet"),
     }
 }
 
 trait Descriptor {
-    fn to_token_stream(&self) -> Result<TokenStream, TokenizingError>;
+    fn to_token_stream(&self) -> syn::Result<TokenStream>;
 }
 
-struct StructDescriptor {
-    ident: syn::Ident,
-    data: syn::DataStruct,
+struct StructDescriptor<'a> {
+    ident: &'a syn::Ident,
+    data: &'a syn::DataStruct,
 }
 
-impl StructDescriptor {
-    fn new(ident: &syn::Ident, data: &syn::DataStruct) -> Self {
-        StructDescriptor {
-            ident: ident.clone(),
-            data: data.clone(),
-        }
+impl<'a> StructDescriptor<'a> {
+    fn new(ident: &'a syn::Ident, data: &'a syn::DataStruct) -> Self {
+        StructDescriptor { ident, data }
     }
 
-    fn parse_fields<'a>(&'a self) -> Result<Vec<BoxedFieldDescriptor>, TokenizingError> {
+    fn parse_fields(&'a self) -> syn::Result<Vec<BoxedFieldDescriptor>> {
         match &self.data.fields {
-            syn::Fields::Named(fields_named) => Ok(fields_named
-                .named
-                .iter()
-                .filter_map(|field| match &field.ident {
-                    Some(ident) => resolve_field_descriptor(&ident, &field).ok(),
-                    None => None,
-                })
-                .collect()),
-            _ => Err(TokenizingError::new("Only named fields are supported yet")),
+            syn::Fields::Named(fields_named) => {
+                let mut fields: Vec<BoxedFieldDescriptor> = vec![];
+
+                for field in &fields_named.named {
+                    let ident = &field.ident.as_ref().ok_or(syn::Error::new(
+                        self.ident.span(),
+                        "Only named fields are supported yet",
+                    ))?;
+                    fields.push(resolve_field_descriptor(&ident, &field)?);
+                }
+
+                Ok(fields)
+            }
+            _ => Err(syn::Error::new(
+                self.ident.span(),
+                "Only named fields are supported yet",
+            )),
         }
     }
 }
 
-impl Descriptor for StructDescriptor {
-    fn to_token_stream(&self) -> Result<TokenStream, TokenizingError> {
+impl<'a> Descriptor for StructDescriptor<'a> {
+    fn to_token_stream(&self) -> syn::Result<TokenStream> {
         let fields = self.parse_fields()?;
 
         let struct_ident = &self.ident;
@@ -110,18 +118,16 @@ impl Descriptor for StructDescriptor {
 fn resolve_field_descriptor<'a>(
     ident: &'a syn::Ident,
     field: &'a syn::Field,
-) -> Result<BoxedFieldDescriptor<'a>, String> {
+) -> syn::Result<BoxedFieldDescriptor<'a>> {
     let angle_bracketed_type = get_angle_bracketed_type(&field.ty);
 
     match angle_bracketed_type {
         Some((bracket_ident, angle_bracketed_type)) => {
             if let Some(main_type) = get_nth_angle_bracketed_type(0, &angle_bracketed_type) {
                 if VectorFieldDescriptor::processes(&bracket_ident, &main_type) {
-                    return Ok(Box::new(VectorFieldDescriptor::new(
-                        &ident,
-                        &main_type,
-                        &field.attrs,
-                    )));
+                    return Ok(Box::new(VectorFieldDescriptor::resolve(
+                        &ident, &main_type, &field,
+                    )?));
                 }
                 if OptionFieldDescriptor::processes(&bracket_ident, &main_type) {
                     return Ok(Box::new(OptionFieldDescriptor::new(&ident, &main_type)));
@@ -166,10 +172,10 @@ type BoxedFieldDescriptor<'a> = Box<dyn FieldDescriptor + 'a>;
 type BoxedToTokens = Box<dyn quote::ToTokens>;
 
 trait FieldDescriptor {
-    fn struct_field_init(&self) -> Result<BoxedToTokens, TokenizingError>;
-    fn builder_field_decl(&self) -> Result<BoxedToTokens, TokenizingError>;
-    fn builder_field_init(&self) -> Result<BoxedToTokens, TokenizingError>;
-    fn builder_setter(&self) -> Result<BoxedToTokens, TokenizingError>;
+    fn struct_field_init(&self) -> syn::Result<BoxedToTokens>;
+    fn builder_field_decl(&self) -> syn::Result<BoxedToTokens>;
+    fn builder_field_init(&self) -> syn::Result<BoxedToTokens>;
+    fn builder_setter(&self) -> syn::Result<BoxedToTokens>;
 }
 
 struct BasicFieldDescriptor<'a> {
@@ -184,25 +190,25 @@ impl<'a> BasicFieldDescriptor<'a> {
 }
 
 impl<'a> FieldDescriptor for BasicFieldDescriptor<'a> {
-    fn struct_field_init(&self) -> Result<BoxedToTokens, TokenizingError> {
+    fn struct_field_init(&self) -> syn::Result<BoxedToTokens> {
         let ident = &self.ident;
         Ok(Box::new(
             quote! { #ident: builder.#ident.clone().ok_or("Failed to build field".to_owned())? },
         ))
     }
 
-    fn builder_field_decl(&self) -> Result<BoxedToTokens, TokenizingError> {
+    fn builder_field_decl(&self) -> syn::Result<BoxedToTokens> {
         let ident = &self.ident;
         let ty = &self.ty;
         Ok(Box::new(quote! { pub #ident: std::option::Option<#ty> }))
     }
 
-    fn builder_field_init(&self) -> Result<BoxedToTokens, TokenizingError> {
+    fn builder_field_init(&self) -> syn::Result<BoxedToTokens> {
         let ident = &self.ident;
         Ok(Box::new(quote! { #ident: std::option::Option::None }))
     }
 
-    fn builder_setter(&self) -> Result<BoxedToTokens, TokenizingError> {
+    fn builder_setter(&self) -> syn::Result<BoxedToTokens> {
         let ident = &self.ident;
         let ty = &self.ty;
         Ok(Box::new(quote! {
@@ -233,23 +239,23 @@ impl<'a> OptionFieldDescriptor<'a> {
 }
 
 impl<'a> FieldDescriptor for OptionFieldDescriptor<'a> {
-    fn struct_field_init(&self) -> Result<BoxedToTokens, TokenizingError> {
+    fn struct_field_init(&self) -> syn::Result<BoxedToTokens> {
         let ident = &self.ident;
         Ok(Box::new(quote! { #ident: builder.#ident.clone() }))
     }
 
-    fn builder_field_decl(&self) -> Result<BoxedToTokens, TokenizingError> {
+    fn builder_field_decl(&self) -> syn::Result<BoxedToTokens> {
         let ident = &self.ident;
         let ty = &self.optional_type;
         Ok(Box::new(quote! { pub #ident: std::option::Option<#ty> }))
     }
 
-    fn builder_field_init(&self) -> Result<BoxedToTokens, TokenizingError> {
+    fn builder_field_init(&self) -> syn::Result<BoxedToTokens> {
         let ident = &self.ident;
         Ok(Box::new(quote! { #ident: std::option::Option::None }))
     }
 
-    fn builder_setter(&self) -> Result<BoxedToTokens, TokenizingError> {
+    fn builder_setter(&self) -> syn::Result<BoxedToTokens> {
         let ident = &self.ident;
         let ty = &self.optional_type;
         Ok(Box::new(quote! {
@@ -264,7 +270,7 @@ impl<'a> FieldDescriptor for OptionFieldDescriptor<'a> {
 struct VectorFieldDescriptor<'a> {
     ident: &'a syn::Ident,
     item_type: &'a syn::Type,
-    each_ident: Option<String>,
+    config: HashMap<String, String>,
 }
 
 impl<'a> VectorFieldDescriptor<'a> {
@@ -272,30 +278,46 @@ impl<'a> VectorFieldDescriptor<'a> {
         ident == &"Vec"
     }
 
-    fn new(
+    fn resolve(
         ident: &'a syn::Ident,
         item_type: &'a syn::Type,
-        attrs: &'a Vec<syn::Attribute>,
-    ) -> Self {
-        Self {
+        field: &'a syn::Field,
+    ) -> syn::Result<Self> {
+        Ok(Self {
             ident,
             item_type,
-            each_ident: Self::resolve_each_config(&attrs),
-        }
+            config: Self::resolve_config(&field)?,
+        })
     }
 
-    fn resolve_each_config(attrs: &'a Vec<syn::Attribute>) -> Option<String> {
+    fn resolve_config(field: &'a syn::Field) -> syn::Result<HashMap<String, String>> {
         let expected_attr_ident = quote::format_ident!("builder");
+        let mut config = HashMap::new();
 
-        for attr in attrs.iter() {
-            if let Some(config) = attr.parse_args::<AttrConfig>().ok() {
-                if attr.path.get_ident() == Some(&expected_attr_ident) && config.ident == &"each" {
-                    return Some(config.lit.value().to_string());
+        for attr in &field.attrs {
+            if let Some(attr_config) = attr.parse_args::<AttrConfig>().ok() {
+                if attr.path.get_ident() == Some(&expected_attr_ident) {
+                    Self::gather_config(&attr_config, &mut config)?;
                 }
             }
         }
 
-        None
+        Ok(config)
+    }
+
+    fn gather_config(
+        attr_config: &AttrConfig,
+        config: &mut HashMap<String, String>,
+    ) -> syn::Result<()> {
+        if attr_config.ident == &"each" {
+            config.insert("each".to_owned(), attr_config.lit.value().to_string());
+            Ok(())
+        } else {
+            Err(syn::Error::new(
+                attr_config.ident.span(),
+                "Invalid field config",
+            ))
+        }
     }
 }
 
@@ -316,26 +338,26 @@ impl syn::parse::Parse for AttrConfig {
 }
 
 impl<'a> FieldDescriptor for VectorFieldDescriptor<'a> {
-    fn struct_field_init(&self) -> Result<BoxedToTokens, TokenizingError> {
+    fn struct_field_init(&self) -> syn::Result<BoxedToTokens> {
         let ident = &self.ident;
         Ok(Box::new(quote! { #ident: builder.#ident.clone() }))
     }
 
-    fn builder_field_decl(&self) -> Result<BoxedToTokens, TokenizingError> {
+    fn builder_field_decl(&self) -> syn::Result<BoxedToTokens> {
         let ident = &self.ident;
         let ty = &self.item_type;
         Ok(Box::new(quote! { pub #ident: std::vec::Vec<#ty> }))
     }
 
-    fn builder_field_init(&self) -> Result<BoxedToTokens, TokenizingError> {
+    fn builder_field_init(&self) -> syn::Result<BoxedToTokens> {
         let ident = &self.ident;
         Ok(Box::new(quote! { #ident: std::vec::Vec::new() }))
     }
 
-    fn builder_setter(&self) -> Result<BoxedToTokens, TokenizingError> {
+    fn builder_setter(&self) -> syn::Result<BoxedToTokens> {
         let ident = &self.ident;
         let ty = &self.item_type;
-        let each_ident = &self.each_ident;
+        let each_ident = &self.config.get("each");
 
         let each_setter = if let Some(each_ident) = each_ident {
             let each_ident = quote::format_ident!("{}", each_ident);
@@ -360,18 +382,5 @@ impl<'a> FieldDescriptor for VectorFieldDescriptor<'a> {
             #each_setter
             #normal_setter
         }))
-    }
-}
-
-#[derive(Debug)]
-struct TokenizingError {
-    message: String,
-}
-
-impl TokenizingError {
-    fn new(msg: &str) -> TokenizingError {
-        TokenizingError {
-            message: msg.to_owned(),
-        }
     }
 }
