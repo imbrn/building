@@ -87,7 +87,7 @@ impl<'a> Descriptor for StructDescriptor<'a> {
                     #builder_ident::new()
                 }
 
-                fn from_builder(builder: &#builder_ident) -> std::result::Result<#struct_ident, String> {
+                fn from_builder(builder: &#builder_ident) -> std::result::Result<#struct_ident, std::string::String> {
                     std::result::Result::Ok(#struct_ident{
                         #(#struct_fields_init),*
                     })
@@ -107,7 +107,7 @@ impl<'a> Descriptor for StructDescriptor<'a> {
 
                 #(#builder_setters)*
 
-                pub fn build(&self) -> std::result::Result<#struct_ident, String> {
+                pub fn build(&self) -> std::result::Result<#struct_ident, std::string::String> {
                     #struct_ident::from_builder(&self)
                 }
             }
@@ -144,12 +144,14 @@ fn get_angle_bracketed_type<'a>(
     ty: &'a syn::Type,
 ) -> Option<(&'a syn::Ident, &'a syn::AngleBracketedGenericArguments)> {
     match ty {
-        syn::Type::Path(type_path) => match type_path.path.segments.first() {
-            Some(segment) => match &segment.arguments {
-                syn::PathArguments::AngleBracketed(args) => Some((&segment.ident, args)),
+        syn::Type::Path(type_path) => {
+            match type_path.path.segments.last() {
+                Some(segment) => match &segment.arguments {
+                    syn::PathArguments::AngleBracketed(args) => Some((&segment.ident, args)),
+                    _ => None,
+                },
                 _ => None,
-            },
-            _ => None,
+            }
         },
         _ => None,
     }
